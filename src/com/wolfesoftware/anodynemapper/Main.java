@@ -3,12 +3,16 @@ package com.wolfesoftware.anodynemapper;
 import java.awt.AWTException;
 import java.awt.Color;
 import java.awt.Graphics;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
 import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.Robot;
 import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.awt.image.Raster;
 
@@ -29,19 +33,28 @@ public class Main
     private static Robot robot;
 
     private static Point windowLocation;
+    private static Rectangle mapRectangle;
+    private static JButton startRecordingButton;
+    private static Timer recordingTimer;
+    private static BufferedImage currentImage;
+    private static JPanel mapDisplay;
 
     public static void main(String[] args) throws AWTException
     {
         robot = new Robot();
 
         JFrame mainWindow = new JFrame("Anodyne Mapper");
-        mainWindow.setSize(400, 200);
+        mainWindow.setSize(500, 300);
         JPanel mainPanel = new JPanel();
         mainWindow.getContentPane().add(mainPanel);
+        mainPanel.setLayout(new GridBagLayout());
 
+        GridBagConstraints layoutData = new GridBagConstraints();
         JButton findWindowButton = new JButton("Find Window");
         findWindowButton.setSize(100, 50);
-        mainPanel.add(findWindowButton);
+        layoutData.gridx = 0;
+        layoutData.gridy = 0;
+        mainPanel.add(findWindowButton, layoutData);
         findWindowButton.addActionListener(new ActionListener() {
             private Timer timer;
             @Override
@@ -78,18 +91,64 @@ public class Main
             }
         });
 
+        startRecordingButton = new JButton("Start Recording");
+        startRecordingButton.setSize(100, 50);
+        startRecordingButton.setEnabled(false);
+        layoutData.gridx = 0;
+        layoutData.gridy = 1;
+        mainPanel.add(startRecordingButton, layoutData);
+        startRecordingButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e)
+            {
+                recordingTimer = new Timer(1000 / 30, new ActionListener() {
+                    @Override
+                    public void actionPerformed(ActionEvent e)
+                    {
+                        recordScreen();
+                    }
+                });
+                recordingTimer.start();
+            }
+        });
+
+        mapDisplay = new JPanel() {
+            {
+                // TODO: this causes garbage all over the non-painted areas when resizing the window
+//                setBackground(TRANSPARENT);
+            }
+            @Override
+            protected void paintComponent(Graphics g)
+            {
+                super.paintComponent(g);
+                if (currentImage != null) {
+                    g.drawImage(currentImage, 0, 0, null);
+                }
+            }
+        };
+        layoutData.gridx = 1;
+        layoutData.gridy = 0;
+        layoutData.gridheight = 2;
+        layoutData.fill = GridBagConstraints.BOTH;
+        layoutData.weightx = 1.0;
+        layoutData.weighty = 1.0;
+        mainPanel.add(mapDisplay, layoutData);
+
         mainWindow.setVisible(true);
+        mainWindow.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e)
+            {
+                // TODO: why doesn't the app shut down normally?
+                System.exit(0);
+            }
+        });
     }
 
-    private static Point findWindow()
-    {
-        BufferedImage image = robot.createScreenCapture(new Rectangle(Toolkit.getDefaultToolkit().getScreenSize()));
-        Raster screenRaster = image.getData();
-        return findSubImage(screenRaster, Resources.menuEnterRaster);
-    }
     private static void setWindowLocation(Point location)
     {
         windowLocation = location;
+        mapRectangle = new Rectangle(windowLocation.x, windowLocation.y + TOP_BAR_SIZE, MAP_SIZE, MAP_SIZE);
 
         JFrame highlightFrame = new JFrame();
         highlightFrame.setSize(MAP_SIZE + 16, MAP_SIZE + 16);
@@ -104,7 +163,6 @@ public class Main
                 super.paintComponent(g);
 
                 g.setColor(new Color(255, 255, 0));
-//                g.fillRect(0, 0, WINDOW_WIDTH - 10, WINDOW_HEIGHT - 10);
                 g.fillRect(0, 0, 8, MAP_SIZE + 16);
                 g.fillRect(MAP_SIZE + 8, 0, 8, MAP_SIZE + 16);
                 g.fillRect(0, 0, MAP_SIZE + 16, 8);
@@ -126,6 +184,8 @@ public class Main
             }
         });
         timer.start();
+
+        startRecordingButton.setEnabled(true);
     }
 
     private static void setUndecorated(JFrame window)
@@ -133,6 +193,19 @@ public class Main
         window.setUndecorated(true);
         window.setBackground(TRANSPARENT);
         window.setFocusableWindowState(false);
+    }
+
+    private static Point findWindow()
+    {
+        BufferedImage image = robot.createScreenCapture(new Rectangle(Toolkit.getDefaultToolkit().getScreenSize()));
+        Raster screenRaster = image.getData();
+        return findSubImage(screenRaster, Resources.menuEnterRaster);
+    }
+
+    private static void recordScreen()
+    {
+        currentImage = robot.createScreenCapture(mapRectangle);
+        mapDisplay.repaint();
     }
 
     private static Point findSubImage(Raster screenRaster, Raster imageRaster)
