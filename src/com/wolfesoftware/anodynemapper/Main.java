@@ -2,6 +2,7 @@ package com.wolfesoftware.anodynemapper;
 
 import java.awt.AWTException;
 import java.awt.Color;
+import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
@@ -26,18 +27,34 @@ import com.wolfesoftware.anodynemapper.resources.Resources;
 public class Main
 {
     private static final Color TRANSPARENT = new Color(0, 0, 0, 0);
-    private static final int WINDOW_WIDTH = 160;
-    private static final int WINDOW_HEIGHT = 180;
+    private static final Color SEMI_TRANSPARENT_YELLOW = new Color(255, 255, 0, 64);
     private static final int MAP_SIZE = 160;
     private static final int TOP_BAR_SIZE = 20;
     private static Robot robot;
 
     private static Point windowLocation;
     private static Rectangle mapRectangle;
+    private static JButton findWindowButton;
     private static JButton startRecordingButton;
-    private static Timer recordingTimer;
     private static BufferedImage currentImage;
-    private static JPanel mapDisplay;
+    private static Raster currentRaster;
+    private static JPanel screenDisplay;
+
+    private static Timer captureTimer = new Timer(1000 / 60, new ActionListener() {
+        @Override
+        public void actionPerformed(ActionEvent e)
+        {
+            captureScreen();
+        }
+    });
+    private static Timer findWindowTimer = new Timer(500, new ActionListener() {
+        @Override
+        public void actionPerformed(ActionEvent e)
+        {
+            tryToFindWindow();
+        }
+    });
+    private static YoungPosition youngPosition;
 
     public static void main(String[] args) throws AWTException
     {
@@ -50,49 +67,30 @@ public class Main
         mainPanel.setLayout(new GridBagLayout());
 
         GridBagConstraints layoutData = new GridBagConstraints();
-        JButton findWindowButton = new JButton("Find Window");
-        findWindowButton.setSize(100, 50);
+        findWindowButton = new JButton("Find Window");
         layoutData.gridx = 0;
         layoutData.gridy = 0;
         mainPanel.add(findWindowButton, layoutData);
         findWindowButton.addActionListener(new ActionListener() {
-            private Timer timer;
             @Override
             public void actionPerformed(ActionEvent e)
             {
-                if (timer == null) {
-                    ActionListener listener = new ActionListener() {
-                        @Override
-                        public void actionPerformed(ActionEvent e)
-                        {
-                            Point location = findWindow();
-                            if (location != null) {
-                                // got one
-                                setWindowLocation(location);
-                                stopTimer();
-                            }
-                        }
-                    };
-                    timer = new Timer(500, listener);
-                    findWindowButton.setText("Cancel");
-                    timer.start();
-                    // and do it now
-                    listener.actionPerformed(null);
+                if (captureTimer.isRunning()) {
+                    captureTimer.stop();
+                    findWindowButton.setText("Find Window");
+                    setCurrentImage(null);
+                    screenDisplay.repaint();
+                } else if (findWindowTimer.isRunning()) {
+                    findWindowTimer.stop();
+                    findWindowButton.setText("Find Window");
                 } else {
-                    // cancel
-                    stopTimer();
+                    findWindowTimer.start();
+                    findWindowButton.setText("Cancel");
                 }
-            }
-            private void stopTimer()
-            {
-                timer.stop();
-                timer = null;
-                findWindowButton.setText("Find Window");
             }
         });
 
         startRecordingButton = new JButton("Start Recording");
-        startRecordingButton.setSize(100, 50);
         startRecordingButton.setEnabled(false);
         layoutData.gridx = 0;
         layoutData.gridy = 1;
@@ -101,34 +99,40 @@ public class Main
             @Override
             public void actionPerformed(ActionEvent e)
             {
-                recordingTimer = new Timer(1000 / 30, new ActionListener() {
-                    @Override
-                    public void actionPerformed(ActionEvent e)
-                    {
-                        recordScreen();
-                    }
-                });
-                recordingTimer.start();
             }
         });
 
-        mapDisplay = new JPanel() {
-            {
-                // TODO: this causes garbage all over the non-painted areas when resizing the window
-//                setBackground(TRANSPARENT);
-            }
+        screenDisplay = new JPanel() {
             @Override
             protected void paintComponent(Graphics g)
             {
                 super.paintComponent(g);
                 if (currentImage != null) {
                     g.drawImage(currentImage, 0, 0, null);
+                    if (youngPosition != null) {
+                        Raster sprite = Resources.youngSprites[youngPosition.spriteIndex];
+                        g.setColor(SEMI_TRANSPARENT_YELLOW);
+                        g.fillRect(youngPosition.location.x, youngPosition.location.y, sprite.getWidth(), sprite.getHeight());
+                    }
                 }
+            }
+        };
+        screenDisplay.setPreferredSize(new Dimension(MAP_SIZE, MAP_SIZE));
+        layoutData.gridx = 0;
+        layoutData.gridy = 2;
+        layoutData.fill = GridBagConstraints.BOTH;
+        mainPanel.add(screenDisplay, layoutData);
+
+        JPanel mapDisplay = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g)
+            {
+                super.paintComponent(g);
             }
         };
         layoutData.gridx = 1;
         layoutData.gridy = 0;
-        layoutData.gridheight = 2;
+        layoutData.gridheight = 3;
         layoutData.fill = GridBagConstraints.BOTH;
         layoutData.weightx = 1.0;
         layoutData.weighty = 1.0;
@@ -145,6 +149,23 @@ public class Main
         });
     }
 
+    private static void setCurrentImage(BufferedImage image)
+    {
+        currentImage = image;
+        currentRaster = image != null ? image.getData() : null;
+    }
+
+    private static void tryToFindWindow()
+    {
+        Point location = findWindow();
+        if (location == null)
+            return;
+        // got one
+        setWindowLocation(location);
+        findWindowTimer.stop();
+        captureTimer.start();
+        findWindowButton.setText("Stop");
+    }
     private static void setWindowLocation(Point location)
     {
         windowLocation = location;
@@ -199,16 +220,10 @@ public class Main
     {
         BufferedImage image = robot.createScreenCapture(new Rectangle(Toolkit.getDefaultToolkit().getScreenSize()));
         Raster screenRaster = image.getData();
-        return findSubImage(screenRaster, Resources.menuEnterRaster);
+        return findSubImage(screenRaster, Resources.menuEnterRaster, 0);
     }
 
-    private static void recordScreen()
-    {
-        currentImage = robot.createScreenCapture(mapRectangle);
-        mapDisplay.repaint();
-    }
-
-    private static Point findSubImage(Raster screenRaster, Raster imageRaster)
+    private static Point findSubImage(Raster screenRaster, Raster imageRaster, int errorMargin)
     {
         int[] screenPixel = new int[3];
         int[] imagePixel = new int[4];
@@ -216,10 +231,10 @@ public class Main
         int screenWidth = screenRaster.getWidth();
         int imageHeight = imageRaster.getHeight();
         int imageWidth = imageRaster.getWidth();
-        for (int windowY = 0; windowY < screenHeight - imageHeight; windowY++) {
-            imageLocation: for (int windowX = 0; windowX < screenWidth - imageWidth; windowX++) {
-                for (int y = 0; y < imageHeight; y++) {
-                    for (int x = 0; x < imageWidth; x++) {
+        for (int windowY = -errorMargin; windowY < screenHeight - imageHeight + errorMargin; windowY++) {
+            imageLocation: for (int windowX = -errorMargin; windowX < screenWidth - imageWidth + errorMargin; windowX++) {
+                for (int y = errorMargin; y < imageHeight - errorMargin; y++) {
+                    for (int x = errorMargin; x < imageWidth - errorMargin; x++) {
                         screenRaster.getPixel(windowX + x, windowY + y, screenPixel);
                         imageRaster.getPixel(x, y, imagePixel);
                         if (imagePixel[3] == 0)
@@ -234,6 +249,32 @@ public class Main
                 // all pixels match
                 return new Point(windowX, windowY);
             }
+        }
+        return null;
+    }
+
+    private static void captureScreen()
+    {
+        setCurrentImage(robot.createScreenCapture(mapRectangle));
+
+        youngPosition = findYoung();
+        screenDisplay.repaint();
+    }
+
+    private static class YoungPosition {
+        public final int spriteIndex;
+        public final Point location;
+        public YoungPosition(int spriteIndex, Point location) {
+            this.spriteIndex = spriteIndex;
+            this.location = location;
+        }
+    }
+    private static YoungPosition findYoung()
+    {
+        for (int i = 0; i < Resources.youngSprites.length; i++) {
+            Point location = findSubImage(currentRaster, Resources.youngSprites[i], 4);
+            if (location != null)
+                return new YoungPosition(i, location);
         }
         return null;
     }
