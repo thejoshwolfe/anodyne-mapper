@@ -16,6 +16,7 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.awt.image.Raster;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.Map.Entry;
 import java.util.TreeMap;
@@ -24,6 +25,7 @@ import javax.swing.JButton;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.SwingConstants;
 import javax.swing.Timer;
 
 import com.wolfesoftware.anodynemapper.resources.Resources;
@@ -66,7 +68,8 @@ public class Main
         }
     });
     private static YoungPosition youngPosition;
-    private static JLabel fpsDisplay;
+    private static JLabel statusLabel;
+    private static JPanel trackingGraph;
     private static JPanel mapDisplay;
 
     public static void main(String[] args) throws AWTException
@@ -74,15 +77,17 @@ public class Main
         robot = new Robot();
 
         JFrame mainWindow = new JFrame("Anodyne Mapper");
-        mainWindow.setSize(500, 300);
+        mainWindow.setSize(MAP_SIZE * 6, MAP_SIZE * 5);
         JPanel mainPanel = new JPanel();
         mainWindow.getContentPane().add(mainPanel);
         mainPanel.setLayout(new GridBagLayout());
 
         GridBagConstraints layoutData = new GridBagConstraints();
+        int rowCount = 0;
+
         findWindowButton = new JButton("Find Window");
         layoutData.gridx = 0;
-        layoutData.gridy = 0;
+        layoutData.gridy = rowCount++;
         mainPanel.add(findWindowButton, layoutData);
         findWindowButton.addActionListener(new ActionListener() {
             @Override
@@ -106,7 +111,7 @@ public class Main
         startRecordingButton = new JButton("Start Recording");
         startRecordingButton.setEnabled(false);
         layoutData.gridx = 0;
-        layoutData.gridy = 1;
+        layoutData.gridy = rowCount++;
         mainPanel.add(startRecordingButton, layoutData);
         startRecordingButton.addActionListener(new ActionListener() {
             @Override
@@ -133,16 +138,76 @@ public class Main
         };
         screenDisplay.setPreferredSize(new Dimension(MAP_SIZE, MAP_SIZE));
         layoutData.gridx = 0;
-        layoutData.gridy = 2;
+        layoutData.gridy = rowCount++;
         layoutData.fill = GridBagConstraints.BOTH;
         mainPanel.add(screenDisplay, layoutData);
 
-        fpsDisplay = new JLabel();
-        fpsDisplay.setText(" ");
+        statusLabel = new JLabel();
+        statusLabel.setText(" ");
+        statusLabel.setHorizontalAlignment(SwingConstants.LEFT);
+        statusLabel.setVerticalAlignment(SwingConstants.TOP);
         layoutData.gridx = 0;
-        layoutData.gridy = 3;
-        layoutData.fill = GridBagConstraints.NONE;
-        mainPanel.add(fpsDisplay, layoutData);
+        layoutData.gridy = rowCount++;
+        layoutData.fill = GridBagConstraints.BOTH;
+        mainPanel.add(statusLabel, layoutData);
+
+        trackingGraph = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g)
+            {
+                super.paintComponent(g);
+                if (session == null)
+                    return;
+                g.setColor(new Color(0, 0, 0));
+                g.fillRect(0, 0, MAP_SIZE, MAP_SIZE);
+                g.setColor(new Color(64, 64, 64));
+                g.drawLine(0, MAP_SIZE / 2, MAP_SIZE, MAP_SIZE / 2);
+                long originT = session.now - 1000;
+                ArrayList<Entry<Long, YoungPosition>> entries = new ArrayList<>(session.youngLocationHistory.entrySet());
+                lineEndLoop: for (int endIndex = 0; endIndex < entries.size(); endIndex++) {
+                    Entry<Long, YoungPosition> entry2 = entries.get(endIndex);
+                    if (entry2.getValue() == null)
+                        continue;
+                    // look backwards for where this line starts
+                    for (int startIndex = endIndex - 1; startIndex >= 0; startIndex--) {
+                        Entry<Long, YoungPosition> entry1 = entries.get(startIndex);
+                        if (entry1.getValue() != null) {
+                            // start here
+                            int t1 = (int)((entry1.getKey() - originT) * MAP_SIZE / 1000);
+                            int t2 = (int)((entry2.getKey() - originT) * MAP_SIZE / 1000);
+                            int x1 = entry1.getValue().location.x;
+                            int y1 = entry1.getValue().location.y;
+                            int x2 = entry2.getValue().location.x;
+                            int y2 = entry2.getValue().location.y;
+                            if (endIndex - startIndex != 1) {
+                                int tmid = (int)((entries.get(endIndex - 1).getKey() - originT) * MAP_SIZE / 1000);
+                                int numerator = tmid - t1;
+                                int denominator = t2 - t1;
+                                int xmid = x1 * (denominator - numerator) / denominator + x2 * numerator / denominator;
+                                int ymid = y1 * (denominator - numerator) / denominator + y2 * numerator / denominator;
+                                g.setColor(new Color(64, 64, 64));
+                                g.drawLine(t1, x1, tmid, xmid);
+                                g.drawLine(t1, y1, tmid, ymid);
+                                t1 = tmid;
+                                x1 = xmid;
+                                y1 = ymid;
+                            }
+                            g.setColor(new Color(255, 0, 0));
+                            g.drawLine(t1, x1, t2, x2);
+                            g.setColor(new Color(0, 0, 255));
+                            g.drawLine(t1, y1, t2, y2);
+                            continue lineEndLoop;
+                        }
+                    }
+                    // all previous locations are unknown. don't draw anything
+                }
+            }
+        };
+        trackingGraph.setPreferredSize(new Dimension(MAP_SIZE, MAP_SIZE));
+        layoutData.gridx = 0;
+        layoutData.gridy = rowCount++;
+        layoutData.fill = GridBagConstraints.BOTH;
+        mainPanel.add(trackingGraph, layoutData);
 
         mapDisplay = new JPanel() {
             @Override
@@ -164,7 +229,7 @@ public class Main
         };
         layoutData.gridx = 1;
         layoutData.gridy = 0;
-        layoutData.gridheight = 4;
+        layoutData.gridheight = rowCount;
         layoutData.fill = GridBagConstraints.BOTH;
         layoutData.weightx = 1.0;
         layoutData.weighty = 1.0;
@@ -270,7 +335,7 @@ public class Main
                         screenRaster.getPixel(windowX + x, windowY + y, screenPixel);
                         imageRaster.getPixel(x, y, imagePixel);
                         if (imagePixel[3] == 0)
-                            continue; // transperant. anything goes.
+                            continue; // transparent. anything goes.
                         if (imagePixel[3] != 255)
                             throw null; // partially transparent.
                         if (!(screenPixel[0] == imagePixel[0] && screenPixel[1] == imagePixel[1] && screenPixel[2] == imagePixel[2]))
@@ -293,65 +358,12 @@ public class Main
         long now = System.currentTimeMillis();
         youngPosition = findYoung();
         if (session != null) {
-            TreeMap<Long, Point> history = session.youngLocationHistory;
+            session.now = now;
+            TreeMap<Long, YoungPosition> history = session.youngLocationHistory;
             // clean up old times
-            Iterator<Long> iterator = history.keySet().iterator();
-            while (iterator.hasNext()) {
-                if (iterator.next() < now - 1000)
-                    iterator.remove();
-                else
-                    break;
-            }
+            cleanupOldTimes(history, now - 1000);
 
-            if (youngPosition != null) {
-                history.put(now, youngPosition.location);
-                Entry<Long, Point> floorEntry = history.floorEntry(now - 600);
-                Entry<Long, Point> ceilingEntry = history.ceilingEntry(now - 600);
-                Entry<Long, Point> pastEntry;
-                if (floorEntry != null && ceilingEntry != null) {
-                    if (now - floorEntry.getKey() < ceilingEntry.getKey() - now)
-                        pastEntry = floorEntry;
-                    else
-                        pastEntry = ceilingEntry;
-                } else if (floorEntry != null) {
-                    pastEntry = floorEntry;
-                } else if (ceilingEntry != null) {
-                    pastEntry = ceilingEntry;
-                } else {
-                    throw null;
-                }
-                long dt = now - pastEntry.getKey();
-                if (500 <= dt && dt <= 900) {
-                    int dx = youngPosition.location.x - pastEntry.getValue().x;
-                    int dy = youngPosition.location.y - pastEntry.getValue().y;
-                    int scrollX = 0;
-                    int scrollY = 0;
-                    if (dx > MAP_SIZE * 2 / 3) {
-                        scrollX = -1;
-                    } else if (dx < -MAP_SIZE * 2 / 3) {
-                        scrollX = 1;
-                    }
-                    if (dy > MAP_SIZE * 2 / 3) {
-                        scrollY = -1;
-                    } else if (dy < -MAP_SIZE * 2 / 3) {
-                        scrollY = 1;
-                    }
-                    if ((scrollX & scrollY) != 0)
-                        System.err.println("scrolled diagonally!");
-                    if ((scrollX | scrollY) != 0)
-                        history.clear();
-                    session.currentX += scrollX;
-                    session.currentY += scrollY;
-                    if (session.currentX < session.minX)
-                        session.minX = session.currentX;
-                    if (session.currentY < session.minY)
-                        session.minY = session.currentY;
-                    if (session.currentX > session.maxX)
-                        session.maxX = session.currentX;
-                    if (session.currentY > session.maxY)
-                        session.maxY = session.currentY;
-                }
-            }
+            history.put(now, youngPosition);
         }
 
         // repaint
@@ -362,9 +374,45 @@ public class Main
         if (lastCaptureTime != 0) {
             double instantFps = 1000.0 / (now - lastCaptureTime);
             dampenedFps = dampenedFps * 0.9 + instantFps * 0.1;
-            fpsDisplay.setText("fps: " + (Math.floor(dampenedFps * 10) / 10));
         }
         lastCaptureTime = now;
+
+        // update status label
+        {
+            String displayFps = String.valueOf(Math.floor(dampenedFps * 10) / 10);
+            String displayYoungPos = youngPosition != null ? pointToString(youngPosition.location) : "???";
+            statusLabel.setText("<html><pre>" + //
+                    "fps: " + displayFps + "\n" + //
+                    "young pos: " + displayYoungPos + "\n" + //
+                    "</pre></html>");
+            trackingGraph.repaint();
+        }
+    }
+
+    private static String pointToString(Point location)
+    {
+        return "[" + rjust(location.x, 3) + "," + rjust(location.y, 3) + "]";
+    }
+
+    private static String rjust(int n, int width)
+    {
+        String number = String.valueOf(n);
+        StringBuilder result = new StringBuilder();
+        while (result.length() + number.length() < width)
+            result.append(' ');
+        result.append(number);
+        return result.toString();
+    }
+
+    private static <T> void cleanupOldTimes(TreeMap<Long, T> history, long time)
+    {
+        Iterator<Long> iterator = history.keySet().iterator();
+        while (iterator.hasNext()) {
+            if (iterator.next() < time)
+                iterator.remove();
+            else
+                break;
+        }
     }
 
     private static class YoungPosition
@@ -395,7 +443,7 @@ public class Main
         public int maxX;
         public int maxY;
 
-        public long historyRecordStartTime = System.currentTimeMillis();
-        public final TreeMap<Long, Point> youngLocationHistory = new TreeMap<>();
+        public long now = System.currentTimeMillis();
+        public final TreeMap<Long, YoungPosition> youngLocationHistory = new TreeMap<>();
     }
 }
