@@ -35,6 +35,8 @@ public class Main
     private static final Color TRANSPARENT = new Color(0, 0, 0, 0);
     private static final Color SEMI_TRANSPARENT_YELLOW = new Color(255, 255, 0, 64);
     private static final int MAP_SIZE = 160;
+    private static final double MAX_WALKING_SPEED = MAP_SIZE / 1200.0;
+    private static final double MAX_SCROLLING_SPEED = MAP_SIZE / 400.0;
     private static final int TOP_BAR_SIZE = 20;
     private static Robot robot;
 
@@ -160,17 +162,22 @@ public class Main
                     return;
                 g.setColor(new Color(0, 0, 0));
                 g.fillRect(0, 0, MAP_SIZE, MAP_SIZE);
-                g.setColor(new Color(64, 64, 64));
-                g.drawLine(0, MAP_SIZE / 2, MAP_SIZE, MAP_SIZE / 2);
+
+                int threshold1 = speedToY(MAX_WALKING_SPEED);
+                int threshold2 = speedToY(MAP_SIZE / 500.0);
+                g.setColor(new Color(32, 32, 32));
+                g.fillRect(0, threshold2, MAP_SIZE, threshold1 - threshold2);
+                g.fillRect(0, threshold2, MAP_SIZE, threshold1 - threshold2);
+
                 long originT = session.now - 1000;
-                ArrayList<Entry<Long, YoungPosition>> entries = new ArrayList<>(session.youngLocationHistory.entrySet());
-                lineEndLoop: for (int endIndex = 0; endIndex < entries.size(); endIndex++) {
-                    Entry<Long, YoungPosition> entry2 = entries.get(endIndex);
+                ArrayList<Entry<Long, YoungPosition>> positionEntries = new ArrayList<>(session.youngLocationHistory.entrySet());
+                lineEndLoop: for (int endIndex = 0; endIndex < positionEntries.size(); endIndex++) {
+                    Entry<Long, YoungPosition> entry2 = positionEntries.get(endIndex);
                     if (entry2.getValue() == null)
                         continue;
                     // look backwards for where this line starts
                     for (int startIndex = endIndex - 1; startIndex >= 0; startIndex--) {
-                        Entry<Long, YoungPosition> entry1 = entries.get(startIndex);
+                        Entry<Long, YoungPosition> entry1 = positionEntries.get(startIndex);
                         if (entry1.getValue() != null) {
                             // start here
                             int t1 = (int)((entry1.getKey() - originT) * MAP_SIZE / 1000);
@@ -180,7 +187,7 @@ public class Main
                             int x2 = entry2.getValue().location.x;
                             int y2 = entry2.getValue().location.y;
                             if (endIndex - startIndex != 1) {
-                                int tmid = (int)((entries.get(endIndex - 1).getKey() - originT) * MAP_SIZE / 1000);
+                                int tmid = (int)((positionEntries.get(endIndex - 1).getKey() - originT) * MAP_SIZE / 1000);
                                 int numerator = tmid - t1;
                                 int denominator = t2 - t1;
                                 int xmid = x1 * (denominator - numerator) / denominator + x2 * numerator / denominator;
@@ -201,6 +208,43 @@ public class Main
                     }
                     // all previous locations are unknown. don't draw anything
                 }
+
+                ArrayList<Entry<Long, Double>> speedEntries = new ArrayList<>(session.youngSpeedHistory.entrySet());
+                lineEndLoop: for (int endIndex = 0; endIndex < speedEntries.size(); endIndex++) {
+                    Entry<Long, Double> entry2 = speedEntries.get(endIndex);
+                    if (entry2.getValue() == null)
+                        continue;
+                    // look backwards for where this line starts
+                    for (int startIndex = endIndex - 1; startIndex >= 0; startIndex--) {
+                        Entry<Long, Double> entry1 = speedEntries.get(startIndex);
+                        if (entry1.getValue() != null) {
+                            // start here
+                            int t1 = (int)((entry1.getKey() - originT) * MAP_SIZE / 1000);
+                            int t2 = (int)((entry2.getKey() - originT) * MAP_SIZE / 1000);
+                            int y1 = speedToY(entry1.getValue());
+                            int y2 = speedToY(entry2.getValue());
+                            if (endIndex - startIndex != 1) {
+                                int tmid = (int)((speedEntries.get(endIndex - 1).getKey() - originT) * MAP_SIZE / 1000);
+                                int numerator = tmid - t1;
+                                int denominator = t2 - t1;
+                                int ymid = y1 * (denominator - numerator) / denominator + y2 * numerator / denominator;
+                                g.setColor(new Color(64, 64, 64));
+                                g.drawLine(t1, y1, tmid, ymid);
+                                t1 = tmid;
+                                y1 = ymid;
+                            }
+                            g.setColor(new Color(0, 255, 0));
+                            g.drawLine(t1, y1, t2, y2);
+                            continue lineEndLoop;
+                        }
+                    }
+                    // all previous locations are unknown. don't draw anything
+                }
+            }
+
+            private int speedToY(double v)
+            {
+                return MAP_SIZE - (int)(v * 300);
             }
         };
         trackingGraph.setPreferredSize(new Dimension(MAP_SIZE, MAP_SIZE));
@@ -350,6 +394,14 @@ public class Main
         return null;
     }
 
+    private enum SpeedTier {
+        STANDING, //
+        WALKING, //
+        SCROLLING, //
+        TOO_FAST, //
+    }
+    private static SpeedTier speedTier;
+
     private static void captureScreen()
     {
         setCurrentImage(robot.createScreenCapture(mapRectangle));
@@ -359,11 +411,39 @@ public class Main
         youngPosition = findYoung();
         if (session != null) {
             session.now = now;
-            TreeMap<Long, YoungPosition> history = session.youngLocationHistory;
             // clean up old times
-            cleanupOldTimes(history, now - 1000);
+            cleanupOldTimes(session.youngLocationHistory, now - 1000);
+            cleanupOldTimes(session.youngSpeedHistory, now - 1000);
+            session.youngLocationHistory.put(now, youngPosition);
 
-            history.put(now, youngPosition);
+            if (youngPosition != null) {
+                ArrayList<Entry<Long, YoungPosition>> lastPositions = getLastPositions(session.youngLocationHistory, 5);
+                if (lastPositions.size() > 3) {
+                    double[] speeds = new double[lastPositions.size() - 1];
+                    for (int i = 1; i < lastPositions.size(); i++) {
+                        Entry<Long, YoungPosition> entry1 = lastPositions.get(i - 1);
+                        Entry<Long, YoungPosition> entry2 = lastPositions.get(i);
+                        YoungPosition position1 = entry1.getValue();
+                        YoungPosition position2 = entry2.getValue();
+                        int dx = position2.location.x - position1.location.x;
+                        int dy = position2.location.y - position1.location.y;
+                        speeds[i - 1] = Math.sqrt(dx * dx + dy * dy) / (entry2.getKey() - entry1.getKey());
+                    }
+                    double speed = getProbableSpeed(speeds);
+                    session.youngSpeedHistory.put(now, speed);
+                    if (speed == 0.0) {
+                        speedTier = SpeedTier.STANDING;
+                    } else if (speed < MAX_WALKING_SPEED) {
+                        speedTier = SpeedTier.WALKING;
+                    } else if (speed < MAX_SCROLLING_SPEED) {
+                        speedTier = SpeedTier.SCROLLING;
+                    } else {
+                        speedTier = SpeedTier.TOO_FAST;
+                    }
+                } else {
+                    speedTier = null;
+                }
+            }
         }
 
         // repaint
@@ -381,11 +461,46 @@ public class Main
         {
             String displayFps = String.valueOf(Math.floor(dampenedFps * 10) / 10);
             String displayYoungPos = youngPosition != null ? pointToString(youngPosition.location) : "???";
+            String displaySpeedTier = speedTier != null ? speedTier.name() : "???";
             statusLabel.setText("<html><pre>" + //
                     "fps: " + displayFps + "\n" + //
                     "young pos: " + displayYoungPos + "\n" + //
+                    "speed tier: " + displaySpeedTier + "\n" + //
                     "</pre></html>");
             trackingGraph.repaint();
+        }
+    }
+
+    private static double getProbableSpeed(double[] speeds)
+    {
+        // stopped is easy to identify
+        if (speeds.length >= 2 && speeds[speeds.length - 1] == 0 && speeds[speeds.length - 2] == 0)
+            return 0;
+
+        double sum = 0;
+        for (double v : speeds)
+            sum += v;
+        return sum / speeds.length;
+    }
+
+    private static ArrayList<Entry<Long, YoungPosition>> getLastPositions(TreeMap<Long, YoungPosition> history, int n)
+    {
+        ArrayList<Entry<Long, YoungPosition>> result = new ArrayList<>(n);
+        if (history.isEmpty())
+            return result;
+        Long time = history.lastKey();
+        while (true) {
+            Entry<Long, YoungPosition> entry = history.lowerEntry(time);
+            if (entry == null)
+                return result;
+            time = entry.getKey();
+            if (entry.getValue() != null) {
+                result.add(0, entry);
+                if (result.size() >= n)
+                    return result;
+            } else {
+                n--;
+            }
         }
     }
 
@@ -445,5 +560,6 @@ public class Main
 
         public long now = System.currentTimeMillis();
         public final TreeMap<Long, YoungPosition> youngLocationHistory = new TreeMap<>();
+        public final TreeMap<Long, Double> youngSpeedHistory = new TreeMap<>();
     }
 }
