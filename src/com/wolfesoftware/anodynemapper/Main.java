@@ -17,6 +17,8 @@ import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.awt.image.Raster;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map.Entry;
 import java.util.TreeMap;
@@ -34,6 +36,8 @@ public class Main
 {
     private static final Color TRANSPARENT = new Color(0, 0, 0, 0);
     private static final Color SEMI_TRANSPARENT_YELLOW = new Color(255, 255, 0, 64);
+    private static final Color SEMI_TRANSPARENT_GREEN = new Color(0, 255, 0, 64);
+    private static final Color SEMI_TRANSPARENT_BLUE = new Color(0, 0, 255, 64);
     private static final int MAP_SIZE = 160;
     private static final double MAX_WALKING_SPEED = MAP_SIZE / 1200.0;
     private static final double MAX_SCROLLING_SPEED = MAP_SIZE / 400.0;
@@ -256,9 +260,20 @@ public class Main
                     return;
                 for (int y = session.minY; y <= session.maxY; y++) {
                     for (int x = session.minX; x <= session.maxX; x++) {
-                        g.drawImage(currentImage, (x - session.minX) * MAP_SIZE, (y - session.minY) * MAP_SIZE, null);
-                        if (session.currentX == x && session.currentY == y) {
-                            g.setColor(SEMI_TRANSPARENT_YELLOW);
+                        RecordedScreen record = session.imageMap.get(new Point(x, y));
+                        if (record != null) {
+                            g.drawImage(record.image, (x - session.minX) * MAP_SIZE, (y - session.minY) * MAP_SIZE, null);
+                        }
+                        if (session.current.x == x && session.current.y == y) {
+                            if (record != null) {
+                                if (!record.isDone()) {
+                                    g.setColor(SEMI_TRANSPARENT_YELLOW);
+                                } else {
+                                    g.setColor(SEMI_TRANSPARENT_GREEN);
+                                }
+                            } else {
+                                g.setColor(SEMI_TRANSPARENT_BLUE);
+                            }
                             g.fillRect((x - session.minX) * MAP_SIZE, (y - session.minY) * MAP_SIZE, MAP_SIZE, MAP_SIZE);
                         }
                     }
@@ -396,6 +411,7 @@ public class Main
     }
     private static SpeedTier speedTier;
     private static Point scrollDirection;
+    private static int stoppedScrollingFramgesAgoCounter;
 
     private static void captureScreen()
     {
@@ -433,7 +449,15 @@ public class Main
                 }
             }
 
-            if (scrollDirection == null) {
+            if (scrollDirection != null) {
+                // check for stop scrolling
+                if (speedTier != SpeedTier.SCROLLING || !session.youngSpeedHistory.lastEntry().getValue().orthoNormalize().equals(scrollDirection)) {
+                    session.current = new Point(session.current.x - scrollDirection.x, session.current.y - scrollDirection.y);
+                    updateMinMax();
+                    scrollDirection = null;
+                    stoppedScrollingFramgesAgoCounter = 0;
+                }
+            } else {
                 // check for scrolling start
                 ArrayList<Entry<Long, Velocity>> recentSpeeds = getLastNonNullEntries(session.youngSpeedHistory, 3);
                 if (recentSpeeds.size() == 3) {
@@ -447,13 +471,41 @@ public class Main
                     if (scrolling)
                         scrollDirection = recentSpeeds.get(recentSpeeds.size() - 1).getValue().orthoNormalize();
                 }
-            } else {
-                // check for stop scrolling
-                if (speedTier != SpeedTier.SCROLLING || !session.youngSpeedHistory.lastEntry().getValue().orthoNormalize().equals(scrollDirection)) {
-                    session.currentX -= scrollDirection.x;
-                    session.currentY -= scrollDirection.y;
-                    updateMinMax();
-                    scrollDirection = null;
+            }
+
+            if (youngPosition != null) {
+                RecordedScreen record = session.imageMap.get(session.current);
+                if (record != null && !record.isDone()) {
+                    // check for filling in the gaps
+                    Iterator<Point> iterator = record.stillNeedPoints.iterator();
+                    Raster sprite = Resources.youngSprites[youngPosition.spriteIndex];
+                    int[] pixel = new int[4];
+                    while (iterator.hasNext()) {
+                        Point point = iterator.next();
+                        int spriteX = point.x - youngPosition.location.x;
+                        int spriteY = point.y - youngPosition.location.y;
+                        if (0 <= spriteX && spriteX < sprite.getWidth() && 0 <= spriteY && spriteY < sprite.getHeight()) {
+                            sprite.getPixel(spriteX, spriteY, pixel);
+                            if (pixel[3] != 0)
+                                continue;
+                        }
+                        // this one is clear now
+                        int rgb = currentImage.getRGB(point.x, point.y);
+                        record.image.setRGB(point.x, point.y, rgb);
+                        iterator.remove();
+                    }
+                    record.image.flush();
+                } else {
+                    if (scrollDirection == null) {
+                        // check for "take a snapshot" command, which is standing still after scrolling
+                        if (stoppedScrollingFramgesAgoCounter <= 2 && speedTier == SpeedTier.STANDING) {
+                            session.imageMap.put(session.current, new RecordedScreen(currentImage, youngPosition));
+
+                            // don't double take
+                            stoppedScrollingFramgesAgoCounter = 10;
+                        }
+                        stoppedScrollingFramgesAgoCounter++;
+                    }
                 }
             }
         }
@@ -487,14 +539,14 @@ public class Main
 
     private static void updateMinMax()
     {
-        if (session.currentX < session.minX)
-            session.minX = session.currentX;
-        if (session.currentY < session.minY)
-            session.minY = session.currentY;
-        if (session.currentX > session.maxX)
-            session.maxX = session.currentX;
-        if (session.currentY > session.maxY)
-            session.maxY = session.currentY;
+        if (session.current.x < session.minX)
+            session.minX = session.current.x;
+        if (session.current.y < session.minY)
+            session.minY = session.current.y;
+        if (session.current.x > session.maxX)
+            session.maxX = session.current.x;
+        if (session.current.y > session.maxY)
+            session.maxY = session.current.y;
     }
 
     private static class Velocity
@@ -618,8 +670,7 @@ public class Main
 
     private static class MappingSession
     {
-        public int currentX;
-        public int currentY;
+        public Point current = new Point(0, 0);
         public int minX;
         public int minY;
         public int maxX;
@@ -628,5 +679,39 @@ public class Main
         public long now = System.currentTimeMillis();
         public final TreeMap<Long, YoungPosition> youngLocationHistory = new TreeMap<>();
         public final TreeMap<Long, Velocity> youngSpeedHistory = new TreeMap<>();
+        public final HashMap<Point, RecordedScreen> imageMap = new HashMap<>();
+    }
+
+    private static class RecordedScreen
+    {
+        public final BufferedImage image;
+        public final HashSet<Point> stillNeedPoints = new HashSet<>();
+
+        public RecordedScreen(BufferedImage image, YoungPosition youngPosition) {
+            this.image = image;
+
+            // don't consider young's sprite correct
+            Raster sprite = Resources.youngSprites[youngPosition.spriteIndex];
+            int[] pixel = new int[4];
+            int height = sprite.getHeight();
+            int width = sprite.getWidth();
+            for (int spriteY = 0; spriteY < height; spriteY++) {
+                for (int spriteX = 0; spriteX < width; spriteX++) {
+                    sprite.getPixel(spriteX, spriteY, pixel);
+                    if (pixel[3] == 0)
+                        continue; // transparent pixels are cool
+                    int imageX = youngPosition.location.x + spriteX;
+                    int imageY = youngPosition.location.y + spriteY;
+                    if (0 <= imageX && imageX < MAP_SIZE && 0 <= imageY && imageY < MAP_SIZE) {
+                        stillNeedPoints.add(new Point(imageX, imageY));
+                    }
+                }
+            }
+        }
+
+        public boolean isDone()
+        {
+            return stillNeedPoints.isEmpty();
+        }
     }
 }
