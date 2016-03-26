@@ -165,13 +165,13 @@ public class Main
 
                 int threshold1 = speedToY(MAX_WALKING_SPEED);
                 int threshold2 = speedToY(MAP_SIZE / 500.0);
-                g.setColor(new Color(32, 32, 32));
+                g.setColor(speedTier == SpeedTier.SCROLLING ? new Color(0, 32, 0) : new Color(32, 32, 32));
                 g.fillRect(0, threshold2, MAP_SIZE, threshold1 - threshold2);
                 g.fillRect(0, threshold2, MAP_SIZE, threshold1 - threshold2);
 
                 long originT = session.now - 1000;
                 ArrayList<Entry<Long, YoungPosition>> positionEntries = new ArrayList<>(session.youngLocationHistory.entrySet());
-                lineEndLoop: for (int endIndex = 0; endIndex < positionEntries.size(); endIndex++) {
+                lineEndLoop: for (int endIndex = 1; endIndex < positionEntries.size(); endIndex++) {
                     Entry<Long, YoungPosition> entry2 = positionEntries.get(endIndex);
                     if (entry2.getValue() == null)
                         continue;
@@ -209,36 +209,30 @@ public class Main
                     // all previous locations are unknown. don't draw anything
                 }
 
-                ArrayList<Entry<Long, Double>> speedEntries = new ArrayList<>(session.youngSpeedHistory.entrySet());
-                lineEndLoop: for (int endIndex = 0; endIndex < speedEntries.size(); endIndex++) {
-                    Entry<Long, Double> entry2 = speedEntries.get(endIndex);
-                    if (entry2.getValue() == null)
-                        continue;
-                    // look backwards for where this line starts
-                    for (int startIndex = endIndex - 1; startIndex >= 0; startIndex--) {
-                        Entry<Long, Double> entry1 = speedEntries.get(startIndex);
-                        if (entry1.getValue() != null) {
-                            // start here
-                            int t1 = (int)((entry1.getKey() - originT) * MAP_SIZE / 1000);
-                            int t2 = (int)((entry2.getKey() - originT) * MAP_SIZE / 1000);
-                            int y1 = speedToY(entry1.getValue());
-                            int y2 = speedToY(entry2.getValue());
-                            if (endIndex - startIndex != 1) {
-                                int tmid = (int)((speedEntries.get(endIndex - 1).getKey() - originT) * MAP_SIZE / 1000);
-                                int numerator = tmid - t1;
-                                int denominator = t2 - t1;
-                                int ymid = y1 * (denominator - numerator) / denominator + y2 * numerator / denominator;
-                                g.setColor(new Color(64, 64, 64));
-                                g.drawLine(t1, y1, tmid, ymid);
-                                t1 = tmid;
-                                y1 = ymid;
-                            }
-                            g.setColor(new Color(0, 255, 0));
-                            g.drawLine(t1, y1, t2, y2);
-                            continue lineEndLoop;
+                ArrayList<Entry<Long, Velocity>> speedEntries = new ArrayList<>(session.youngSpeedHistory.entrySet());
+                for (int endIndex = 1; endIndex < speedEntries.size(); endIndex++) {
+                    Entry<Long, Velocity> entry2 = speedEntries.get(endIndex);
+                    int startIndex = endIndex - 1;
+                    Entry<Long, Velocity> entry1 = speedEntries.get(startIndex);
+                    if (entry1.getValue() != null) {
+                        // start here
+                        int t1 = (int)((entry1.getKey() - originT) * MAP_SIZE / 1000);
+                        int t2 = (int)((entry2.getKey() - originT) * MAP_SIZE / 1000);
+                        int y1 = speedToY(entry1.getValue().getOrthoSpeed());
+                        int y2 = speedToY(entry2.getValue().getOrthoSpeed());
+                        if (endIndex - startIndex != 1) {
+                            int tmid = (int)((speedEntries.get(endIndex - 1).getKey() - originT) * MAP_SIZE / 1000);
+                            int numerator = tmid - t1;
+                            int denominator = t2 - t1;
+                            int ymid = y1 * (denominator - numerator) / denominator + y2 * numerator / denominator;
+                            g.setColor(new Color(64, 64, 64));
+                            g.drawLine(t1, y1, tmid, ymid);
+                            t1 = tmid;
+                            y1 = ymid;
                         }
+                        g.setColor(new Color(0, 255, 0));
+                        g.drawLine(t1, y1, t2, y2);
                     }
-                    // all previous locations are unknown. don't draw anything
                 }
             }
 
@@ -401,6 +395,7 @@ public class Main
         TOO_FAST, //
     }
     private static SpeedTier speedTier;
+    private static Point scrollDirection;
 
     private static void captureScreen()
     {
@@ -417,9 +412,9 @@ public class Main
             session.youngLocationHistory.put(now, youngPosition);
 
             if (youngPosition != null) {
-                ArrayList<Entry<Long, YoungPosition>> lastPositions = getLastPositions(session.youngLocationHistory, 5);
+                ArrayList<Entry<Long, YoungPosition>> lastPositions = getLastNonNullEntries(session.youngLocationHistory, 5);
                 if (lastPositions.size() > 3) {
-                    double[] speeds = new double[lastPositions.size() - 1];
+                    Velocity[] velocities = new Velocity[lastPositions.size() - 1];
                     for (int i = 1; i < lastPositions.size(); i++) {
                         Entry<Long, YoungPosition> entry1 = lastPositions.get(i - 1);
                         Entry<Long, YoungPosition> entry2 = lastPositions.get(i);
@@ -427,21 +422,38 @@ public class Main
                         YoungPosition position2 = entry2.getValue();
                         int dx = position2.location.x - position1.location.x;
                         int dy = position2.location.y - position1.location.y;
-                        speeds[i - 1] = Math.sqrt(dx * dx + dy * dy) / (entry2.getKey() - entry1.getKey());
+                        double dt = entry2.getKey() - entry1.getKey();
+                        velocities[i - 1] = new Velocity(dx / dt, dy / dt);
                     }
-                    double speed = getProbableSpeed(speeds);
+                    Velocity speed = getProbableVelocity(velocities);
                     session.youngSpeedHistory.put(now, speed);
-                    if (speed == 0.0) {
-                        speedTier = SpeedTier.STANDING;
-                    } else if (speed < MAX_WALKING_SPEED) {
-                        speedTier = SpeedTier.WALKING;
-                    } else if (speed < MAX_SCROLLING_SPEED) {
-                        speedTier = SpeedTier.SCROLLING;
-                    } else {
-                        speedTier = SpeedTier.TOO_FAST;
-                    }
+                    speedTier = getSpeedTier(speed);
                 } else {
                     speedTier = null;
+                }
+            }
+
+            if (scrollDirection == null) {
+                // check for scrolling start
+                ArrayList<Entry<Long, Velocity>> recentSpeeds = getLastNonNullEntries(session.youngSpeedHistory, 3);
+                if (recentSpeeds.size() == 3) {
+                    boolean scrolling = true;
+                    for (Entry<Long, Velocity> entry : recentSpeeds) {
+                        if (getSpeedTier(entry.getValue()) != SpeedTier.SCROLLING) {
+                            scrolling = false;
+                            break;
+                        }
+                    }
+                    if (scrolling)
+                        scrollDirection = recentSpeeds.get(recentSpeeds.size() - 1).getValue().orthoNormalize();
+                }
+            } else {
+                // check for stop scrolling
+                if (speedTier != SpeedTier.SCROLLING || !session.youngSpeedHistory.lastEntry().getValue().orthoNormalize().equals(scrollDirection)) {
+                    session.currentX -= scrollDirection.x;
+                    session.currentY -= scrollDirection.y;
+                    updateMinMax();
+                    scrollDirection = null;
                 }
             }
         }
@@ -462,35 +474,90 @@ public class Main
             String displayFps = String.valueOf(Math.floor(dampenedFps * 10) / 10);
             String displayYoungPos = youngPosition != null ? pointToString(youngPosition.location) : "???";
             String displaySpeedTier = speedTier != null ? speedTier.name() : "???";
+            String displayScrollDir = scrollDirection != null ? pointToString(scrollDirection) : "---";
             statusLabel.setText("<html><pre>" + //
                     "fps: " + displayFps + "\n" + //
                     "young pos: " + displayYoungPos + "\n" + //
                     "speed tier: " + displaySpeedTier + "\n" + //
+                    "scroll: " + displayScrollDir + "\n" + //
                     "</pre></html>");
             trackingGraph.repaint();
         }
     }
 
-    private static double getProbableSpeed(double[] speeds)
+    private static void updateMinMax()
     {
-        // stopped is easy to identify
-        if (speeds.length >= 2 && speeds[speeds.length - 1] == 0 && speeds[speeds.length - 2] == 0)
-            return 0;
-
-        double sum = 0;
-        for (double v : speeds)
-            sum += v;
-        return sum / speeds.length;
+        if (session.currentX < session.minX)
+            session.minX = session.currentX;
+        if (session.currentY < session.minY)
+            session.minY = session.currentY;
+        if (session.currentX > session.maxX)
+            session.maxX = session.currentX;
+        if (session.currentY > session.maxY)
+            session.maxY = session.currentY;
     }
 
-    private static ArrayList<Entry<Long, YoungPosition>> getLastPositions(TreeMap<Long, YoungPosition> history, int n)
+    private static class Velocity
     {
-        ArrayList<Entry<Long, YoungPosition>> result = new ArrayList<>(n);
+        public final double x;
+        public final double y;
+        public Velocity(double x, double y) {
+            this.x = x;
+            this.y = y;
+        }
+        public Point orthoNormalize()
+        {
+            if (Math.abs(x) > Math.abs(y))
+                return new Point((int)Math.signum(x), 0);
+            else
+                return new Point(0, (int)Math.signum(y));
+        }
+        public boolean isZero()
+        {
+            return x == 0 && y == 0;
+        }
+        public double getOrthoSpeed()
+        {
+            return Math.max(Math.abs(x), Math.abs(y));
+        }
+    }
+    private static SpeedTier getSpeedTier(Velocity velocity)
+    {
+        double speed = velocity.getOrthoSpeed();
+        if (speed == 0.0) {
+            return SpeedTier.STANDING;
+        } else if (speed < MAX_WALKING_SPEED) {
+            return SpeedTier.WALKING;
+        } else if (speed < MAX_SCROLLING_SPEED) {
+            return SpeedTier.SCROLLING;
+        } else {
+            return SpeedTier.TOO_FAST;
+        }
+    }
+
+    private static Velocity getProbableVelocity(Velocity[] velocities)
+    {
+        // stopped is easy to identify
+        if (velocities.length >= 2 && velocities[velocities.length - 1].isZero() && velocities[velocities.length - 2].isZero())
+            return new Velocity(0, 0);
+
+        double sumX = 0;
+        double sumY = 0;
+        for (Velocity v : velocities) {
+            sumX += v.x;
+            sumY += v.y;
+        }
+        return new Velocity(sumX / velocities.length, sumY / velocities.length);
+    }
+
+    private static <T> ArrayList<Entry<Long, T>> getLastNonNullEntries(TreeMap<Long, T> history, int n)
+    {
+        ArrayList<Entry<Long, T>> result = new ArrayList<>(n);
         if (history.isEmpty())
             return result;
         Long time = history.lastKey();
         while (true) {
-            Entry<Long, YoungPosition> entry = history.lowerEntry(time);
+            Entry<Long, T> entry = history.lowerEntry(time);
             if (entry == null)
                 return result;
             time = entry.getKey();
@@ -560,6 +627,6 @@ public class Main
 
         public long now = System.currentTimeMillis();
         public final TreeMap<Long, YoungPosition> youngLocationHistory = new TreeMap<>();
-        public final TreeMap<Long, Double> youngSpeedHistory = new TreeMap<>();
+        public final TreeMap<Long, Velocity> youngSpeedHistory = new TreeMap<>();
     }
 }
