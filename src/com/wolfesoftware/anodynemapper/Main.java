@@ -16,6 +16,9 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.awt.image.Raster;
+import java.util.Iterator;
+import java.util.Map.Entry;
+import java.util.TreeMap;
 
 import javax.swing.JButton;
 import javax.swing.JFrame;
@@ -44,6 +47,8 @@ public class Main
     private static long lastCaptureTime = 0;
     private static double dampenedFps = 0.0;
 
+    private static MappingSession session;
+
     // capture as fast as possible. in practice this is 30Hz and near 0% CPU usage.
     // maybe this time class is the wrong solution to timing.
     private static Timer captureTimer = new Timer(0, new ActionListener() {
@@ -62,6 +67,7 @@ public class Main
     });
     private static YoungPosition youngPosition;
     private static JLabel fpsDisplay;
+    private static JPanel mapDisplay;
 
     public static void main(String[] args) throws AWTException
     {
@@ -106,6 +112,7 @@ public class Main
             @Override
             public void actionPerformed(ActionEvent e)
             {
+                session = new MappingSession();
             }
         });
 
@@ -137,11 +144,22 @@ public class Main
         layoutData.fill = GridBagConstraints.NONE;
         mainPanel.add(fpsDisplay, layoutData);
 
-        JPanel mapDisplay = new JPanel() {
+        mapDisplay = new JPanel() {
             @Override
             protected void paintComponent(Graphics g)
             {
                 super.paintComponent(g);
+                if (session == null)
+                    return;
+                for (int y = session.minY; y <= session.maxY; y++) {
+                    for (int x = session.minX; x <= session.maxX; x++) {
+                        g.drawImage(currentImage, (x - session.minX) * MAP_SIZE, (y - session.minY) * MAP_SIZE, null);
+                        if (session.currentX == x && session.currentY == y) {
+                            g.setColor(SEMI_TRANSPARENT_YELLOW);
+                            g.fillRect((x - session.minX) * MAP_SIZE, (y - session.minY) * MAP_SIZE, MAP_SIZE, MAP_SIZE);
+                        }
+                    }
+                }
             }
         };
         layoutData.gridx = 1;
@@ -271,16 +289,82 @@ public class Main
     {
         setCurrentImage(robot.createScreenCapture(mapRectangle));
 
+        // analyze
+        long now = System.currentTimeMillis();
         youngPosition = findYoung();
-        screenDisplay.repaint();
+        if (session != null) {
+            TreeMap<Long, Point> history = session.youngLocationHistory;
+            // clean up old times
+            Iterator<Long> iterator = history.keySet().iterator();
+            while (iterator.hasNext()) {
+                if (iterator.next() < now - 1000)
+                    iterator.remove();
+                else
+                    break;
+            }
 
-        long currentTime = System.currentTimeMillis();
+            if (youngPosition != null) {
+                history.put(now, youngPosition.location);
+                Entry<Long, Point> floorEntry = history.floorEntry(now - 600);
+                Entry<Long, Point> ceilingEntry = history.ceilingEntry(now - 600);
+                Entry<Long, Point> pastEntry;
+                if (floorEntry != null && ceilingEntry != null) {
+                    if (now - floorEntry.getKey() < ceilingEntry.getKey() - now)
+                        pastEntry = floorEntry;
+                    else
+                        pastEntry = ceilingEntry;
+                } else if (floorEntry != null) {
+                    pastEntry = floorEntry;
+                } else if (ceilingEntry != null) {
+                    pastEntry = ceilingEntry;
+                } else {
+                    throw null;
+                }
+                long dt = now - pastEntry.getKey();
+                if (500 <= dt && dt <= 900) {
+                    int dx = youngPosition.location.x - pastEntry.getValue().x;
+                    int dy = youngPosition.location.y - pastEntry.getValue().y;
+                    int scrollX = 0;
+                    int scrollY = 0;
+                    if (dx > MAP_SIZE * 2 / 3) {
+                        scrollX = -1;
+                    } else if (dx < -MAP_SIZE * 2 / 3) {
+                        scrollX = 1;
+                    }
+                    if (dy > MAP_SIZE * 2 / 3) {
+                        scrollY = -1;
+                    } else if (dy < -MAP_SIZE * 2 / 3) {
+                        scrollY = 1;
+                    }
+                    if ((scrollX & scrollY) != 0)
+                        System.err.println("scrolled diagonally!");
+                    if ((scrollX | scrollY) != 0)
+                        history.clear();
+                    session.currentX += scrollX;
+                    session.currentY += scrollY;
+                    if (session.currentX < session.minX)
+                        session.minX = session.currentX;
+                    if (session.currentY < session.minY)
+                        session.minY = session.currentY;
+                    if (session.currentX > session.maxX)
+                        session.maxX = session.currentX;
+                    if (session.currentY > session.maxY)
+                        session.maxY = session.currentY;
+                }
+            }
+        }
+
+        // repaint
+        screenDisplay.repaint();
+        mapDisplay.repaint();
+
+        // fps
         if (lastCaptureTime != 0) {
-            double instantFps = 1000.0 / (currentTime - lastCaptureTime);
+            double instantFps = 1000.0 / (now - lastCaptureTime);
             dampenedFps = dampenedFps * 0.9 + instantFps * 0.1;
             fpsDisplay.setText("fps: " + (Math.floor(dampenedFps * 10) / 10));
         }
-        lastCaptureTime = currentTime;
+        lastCaptureTime = now;
     }
 
     private static class YoungPosition
@@ -300,5 +384,18 @@ public class Main
                 return new YoungPosition(i, location);
         }
         return null;
+    }
+
+    private static class MappingSession
+    {
+        public int currentX;
+        public int currentY;
+        public int minX;
+        public int minY;
+        public int maxX;
+        public int maxY;
+
+        public long historyRecordStartTime = System.currentTimeMillis();
+        public final TreeMap<Long, Point> youngLocationHistory = new TreeMap<>();
     }
 }
