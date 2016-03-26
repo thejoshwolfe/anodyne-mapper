@@ -19,6 +19,7 @@ import java.awt.image.Raster;
 
 import javax.swing.JButton;
 import javax.swing.JFrame;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.Timer;
 
@@ -40,7 +41,12 @@ public class Main
     private static Raster currentRaster;
     private static JPanel screenDisplay;
 
-    private static Timer captureTimer = new Timer(1000 / 60, new ActionListener() {
+    private static long lastCaptureTime = 0;
+    private static double dampenedFps = 0.0;
+
+    // capture as fast as possible. in practice this is 30Hz and near 0% CPU usage.
+    // maybe this time class is the wrong solution to timing.
+    private static Timer captureTimer = new Timer(0, new ActionListener() {
         @Override
         public void actionPerformed(ActionEvent e)
         {
@@ -55,6 +61,7 @@ public class Main
         }
     });
     private static YoungPosition youngPosition;
+    private static JLabel fpsDisplay;
 
     public static void main(String[] args) throws AWTException
     {
@@ -123,6 +130,13 @@ public class Main
         layoutData.fill = GridBagConstraints.BOTH;
         mainPanel.add(screenDisplay, layoutData);
 
+        fpsDisplay = new JLabel();
+        fpsDisplay.setText(" ");
+        layoutData.gridx = 0;
+        layoutData.gridy = 3;
+        layoutData.fill = GridBagConstraints.NONE;
+        mainPanel.add(fpsDisplay, layoutData);
+
         JPanel mapDisplay = new JPanel() {
             @Override
             protected void paintComponent(Graphics g)
@@ -132,7 +146,7 @@ public class Main
         };
         layoutData.gridx = 1;
         layoutData.gridy = 0;
-        layoutData.gridheight = 3;
+        layoutData.gridheight = 4;
         layoutData.fill = GridBagConstraints.BOTH;
         layoutData.weightx = 1.0;
         layoutData.weighty = 1.0;
@@ -259,9 +273,18 @@ public class Main
 
         youngPosition = findYoung();
         screenDisplay.repaint();
+
+        long currentTime = System.currentTimeMillis();
+        if (lastCaptureTime != 0) {
+            double instantFps = 1000.0 / (currentTime - lastCaptureTime);
+            dampenedFps = dampenedFps * 0.9 + instantFps * 0.1;
+            fpsDisplay.setText("fps: " + (Math.floor(dampenedFps * 10) / 10));
+        }
+        lastCaptureTime = currentTime;
     }
 
-    private static class YoungPosition {
+    private static class YoungPosition
+    {
         public final int spriteIndex;
         public final Point location;
         public YoungPosition(int spriteIndex, Point location) {
