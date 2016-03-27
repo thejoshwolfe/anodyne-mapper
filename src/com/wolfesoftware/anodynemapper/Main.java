@@ -496,7 +496,7 @@ public class Main
                     }
                     record.image.flush();
                 } else {
-                    if (scrollDirection == null) {
+                    if (record == null && scrollDirection == null) {
                         // check for "take a snapshot" command, which is standing still after scrolling
                         if (stoppedScrollingFramgesAgoCounter <= 2 && speedTier == SpeedTier.STANDING) {
                             session.imageMap.put(session.current, new RecordedScreen(currentImage, youngPosition));
