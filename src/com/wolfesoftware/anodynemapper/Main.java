@@ -18,6 +18,8 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.awt.image.Raster;
+import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -25,14 +27,17 @@ import java.util.Iterator;
 import java.util.Map.Entry;
 import java.util.TreeMap;
 
+import javax.imageio.ImageIO;
 import javax.swing.AbstractAction;
 import javax.swing.JButton;
+import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.SwingConstants;
 import javax.swing.Timer;
+import javax.swing.filechooser.FileNameExtensionFilter;
 
 import com.wolfesoftware.anodynemapper.resources.Resources;
 
@@ -131,6 +136,43 @@ public class Main
             public void actionPerformed(ActionEvent e)
             {
                 session = new MappingSession();
+            }
+        });
+
+        JButton saveButton = new JButton("Export...");
+        layoutData.gridx = 0;
+        layoutData.gridy = rowCount++;
+        mainPanel.add(saveButton, layoutData);
+        saveButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e)
+            {
+                if (session == null || session.imageMap.isEmpty())
+                    return; // TODO disable instead
+                boolean wasCapturing = captureTimer.isRunning();
+                if (wasCapturing) {
+                    captureTimer.stop();
+                }
+
+                JFileChooser fileChooser = new JFileChooser(new File("."));
+                fileChooser.addChoosableFileFilter(new FileNameExtensionFilter("PNG Image", "png"));
+                fileChooser.setAcceptAllFileFilterUsed(false);
+                int result = fileChooser.showSaveDialog(mainWindow);
+                if (result != JFileChooser.APPROVE_OPTION)
+                    return;
+                File file = fileChooser.getSelectedFile();
+
+                BufferedImage outputImage = renderMap();
+                try {
+                    if (!ImageIO.write(outputImage, "png", file))
+                        throw null;
+                } catch (IOException e1) {
+                    e1.printStackTrace();
+                }
+
+                if (wasCapturing) {
+                    captureTimer.start();
+                }
             }
         });
 
@@ -308,6 +350,7 @@ public class Main
             public void actionPerformed(ActionEvent e)
             {
                 session.imageMap.remove(new Point(selectedMapTileX, selectedMapTileY));
+                findMinMax();
             }
         });
         mapDisplay.addMouseListener(new MouseAdapter() {
@@ -331,6 +374,22 @@ public class Main
                 System.exit(0);
             }
         });
+    }
+
+    private static BufferedImage renderMap()
+    {
+        BufferedImage output = new BufferedImage((session.maxX - session.minX + 1) * MAP_SIZE, (session.maxY - session.minY + 1) * MAP_SIZE, BufferedImage.TYPE_4BYTE_ABGR);
+        Graphics g = output.getGraphics();
+        for (int y = session.minY; y <= session.maxY; y++) {
+            for (int x = session.minX; x <= session.maxX; x++) {
+                RecordedScreen record = session.imageMap.get(new Point(x, y));
+                if (record != null) {
+                    g.drawImage(record.image, (x - session.minX) * MAP_SIZE, (y - session.minY) * MAP_SIZE, null);
+                }
+            }
+        }
+        output.flush();
+        return output;
     }
 
     private static void setCurrentImage(BufferedImage image)
@@ -487,7 +546,7 @@ public class Main
                 // check for stop scrolling
                 if (speedTier != SpeedTier.SCROLLING || !session.youngSpeedHistory.lastEntry().getValue().orthoNormalize().equals(scrollDirection)) {
                     session.current = new Point(session.current.x - scrollDirection.x, session.current.y - scrollDirection.y);
-                    updateMinMax();
+                    findMinMax();
                     scrollDirection = null;
                     stoppedScrollingFramgesAgoCounter = 0;
                 }
@@ -571,16 +630,22 @@ public class Main
         }
     }
 
-    private static void updateMinMax()
+    private static void findMinMax()
     {
-        if (session.current.x < session.minX)
-            session.minX = session.current.x;
-        if (session.current.y < session.minY)
-            session.minY = session.current.y;
-        if (session.current.x > session.maxX)
-            session.maxX = session.current.x;
-        if (session.current.y > session.maxY)
-            session.maxY = session.current.y;
+        session.minX = session.current.x;
+        session.maxX = session.current.x;
+        session.minY = session.current.y;
+        session.maxY = session.current.y;
+        for (Point location : session.imageMap.keySet()) {
+            if (location.x < session.minX)
+                session.minX = location.x;
+            if (location.y < session.minY)
+                session.minY = location.y;
+            if (location.x > session.maxX)
+                session.maxX = location.x;
+            if (location.y > session.maxY)
+                session.maxY = location.y;
+        }
     }
 
     private static class Velocity
