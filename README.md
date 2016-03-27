@@ -10,7 +10,7 @@ It builds in Eclipse (v4.5).
 Once you have this utility running, run Anodyne in another window.
 Configure Anodyne to run with 1x scaling in windowed mode.
 This will make the game appear very, very tiny (160x180 pixels, to be exact).
-Click "Find Window", and you should see a yellow boarder appear around (or possibly behind) the Anodyne window,
+Click "Find Window", and you should see a yellow border appear around (or possibly behind) the Anodyne window,
 and you should start getting a video feed of the 160x160-pixel main area of the game.
 
 When you walk Young around, the graph of red/blue/green lines should update to show you where the utility thinks you are.
