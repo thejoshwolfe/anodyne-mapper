@@ -89,6 +89,7 @@ public class Main
 
     private static int selectedMapTileX;
     private static int selectedMapTileY;
+    private static int zoomFactor = 1;
 
     public static void main(String[] args) throws AWTException
     {
@@ -311,7 +312,7 @@ public class Main
                     for (int x = session.minX; x <= session.maxX; x++) {
                         RecordedScreen record = session.imageMap.get(new Point(x, y));
                         if (record != null) {
-                            g.drawImage(record.image, (x - session.minX) * MAP_SIZE, (y - session.minY) * MAP_SIZE, null);
+                            g.drawImage(record.image, (x - session.minX) * MAP_SIZE / zoomFactor, (y - session.minY) * MAP_SIZE / zoomFactor, MAP_SIZE / zoomFactor, MAP_SIZE / zoomFactor, null);
                         }
                         if (session.current.x == x && session.current.y == y) {
                             if (record != null) {
@@ -323,7 +324,7 @@ public class Main
                             } else {
                                 g.setColor(SEMI_TRANSPARENT_BLUE);
                             }
-                            g.fillRect((x - session.minX) * MAP_SIZE, (y - session.minY) * MAP_SIZE, MAP_SIZE, MAP_SIZE);
+                            g.fillRect((x - session.minX) * MAP_SIZE / zoomFactor, (y - session.minY) * MAP_SIZE / zoomFactor, MAP_SIZE / zoomFactor, MAP_SIZE / zoomFactor);
                         }
                     }
                 }
@@ -353,14 +354,34 @@ public class Main
                 findMinMax();
             }
         });
+        mapContextMenu.add(new AbstractAction("Zoom Out") {
+            @Override
+            public void actionPerformed(ActionEvent e)
+            {
+                if (zoomFactor == 1)
+                    zoomFactor = 2;
+                else if (zoomFactor == 2)
+                    zoomFactor = 4;
+            }
+        });
+        mapContextMenu.add(new AbstractAction("Zoom In") {
+            @Override
+            public void actionPerformed(ActionEvent e)
+            {
+                if (zoomFactor == 4)
+                    zoomFactor = 2;
+                else if (zoomFactor == 2)
+                    zoomFactor = 1;
+            }
+        });
         mapDisplay.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e)
             {
                 if (session == null)
                     return;
-                selectedMapTileX = e.getX() / MAP_SIZE + session.minX;
-                selectedMapTileY = e.getY() / MAP_SIZE + session.minY;
+                selectedMapTileX = e.getX() / (MAP_SIZE / zoomFactor) + session.minX;
+                selectedMapTileY = e.getY() / (MAP_SIZE / zoomFactor) + session.minY;
                 mapContextMenu.show(mapDisplay, e.getX(), e.getY());
             }
         });
