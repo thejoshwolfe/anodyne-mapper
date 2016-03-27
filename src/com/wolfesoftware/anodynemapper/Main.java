@@ -12,6 +12,8 @@ import java.awt.Robot;
 import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
@@ -23,10 +25,12 @@ import java.util.Iterator;
 import java.util.Map.Entry;
 import java.util.TreeMap;
 
+import javax.swing.AbstractAction;
 import javax.swing.JButton;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.SwingConstants;
 import javax.swing.Timer;
 
@@ -77,6 +81,9 @@ public class Main
     private static JLabel statusLabel;
     private static JPanel trackingGraph;
     private static JPanel mapDisplay;
+
+    private static int selectedMapTileX;
+    private static int selectedMapTileY;
 
     public static void main(String[] args) throws AWTException
     {
@@ -287,6 +294,33 @@ public class Main
         layoutData.weightx = 1.0;
         layoutData.weighty = 1.0;
         mainPanel.add(mapDisplay, layoutData);
+
+        JPopupMenu mapContextMenu = new JPopupMenu();
+        mapContextMenu.add(new AbstractAction("I am here") {
+            @Override
+            public void actionPerformed(ActionEvent e)
+            {
+                session.current = new Point(selectedMapTileX, selectedMapTileY);
+            }
+        });
+        mapContextMenu.add(new AbstractAction("Erase Tile") {
+            @Override
+            public void actionPerformed(ActionEvent e)
+            {
+                session.imageMap.remove(new Point(selectedMapTileX, selectedMapTileY));
+            }
+        });
+        mapDisplay.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e)
+            {
+                if (session == null)
+                    return;
+                selectedMapTileX = e.getX() / MAP_SIZE + session.minX;
+                selectedMapTileY = e.getY() / MAP_SIZE + session.minY;
+                mapContextMenu.show(mapDisplay, e.getX(), e.getY());
+            }
+        });
 
         mainWindow.setVisible(true);
         mainWindow.addWindowListener(new WindowAdapter() {
